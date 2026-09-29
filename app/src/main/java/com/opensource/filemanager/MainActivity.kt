@@ -1,7 +1,9 @@
 package com.opensource.filemanager
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -16,8 +18,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.opensource.filemanager.server.PcShareServer
 import java.io.File
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,27 +59,36 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FileManagerScreen(onRequestPermission: () -> Unit) {
-    // Start at the root of the user's internal storage
+    val context = LocalContext.current
     var currentPath by remember { mutableStateOf(Environment.getExternalStorageDirectory()) }
     var files by remember { mutableStateOf(emptyList<File>()) }
     
-    // Check if we have permission to read files
+    // Server State
+    var isServerRunning by remember { mutableStateOf(false) }
+    var server by remember { mutableStateOf<PcShareServer?>(null) }
+    val localIpAddress = remember { getLocalIpAddress(context) }
+
     var hasPermission by remember { 
         mutableStateOf(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 Environment.isExternalStorageManager()
             } else {
-                true // Simplified fallback for older Android versions
+                true 
             }
         )
     }
 
-    // Refresh the file list whenever the path or permissions change
     LaunchedEffect(currentPath, hasPermission) {
         if (hasPermission) {
             val fileList = currentPath.listFiles()?.toList() ?: emptyList()
-            // Sort: Directories first, then alphabetical
-            files = fileList.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+            files = fileList.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.ROOT) }))
+        }
+    }
+
+    // Cleanup server if app closes
+    DisposableEffect(Unit) {
+        onDispose {
+            server?.stop()
         }
     }
 
@@ -83,7 +97,6 @@ fun FileManagerScreen(onRequestPermission: () -> Unit) {
             TopAppBar(
                 title = { Text(currentPath.name.ifEmpty { "Internal Storage" }) },
                 navigationIcon = {
-                    // Show a Back button if we aren't at the root directory
                     if (currentPath.absolutePath != Environment.getExternalStorageDirectory().absolutePath) {
                         Button(
                             onClick = { currentPath = currentPath.parentFile ?: currentPath },
@@ -96,12 +109,51 @@ fun FileManagerScreen(onRequestPermission: () -> Unit) {
             )
         }
     ) { paddingValues ->
-        Box(modifier = Modifier.padding(paddingValues).fillMaxSize()) {
+        Column(modifier = Modifier.padding(paddingValues).fillMaxSize()) {
+            
+            // PC Share Control Panel
+            if (hasPermission) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.secondaryContainer
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("Access from PC", style = MaterialTheme.typography.titleMedium)
+                            if (isServerRunning) {
+                                Text("http://$localIpAddress:8080", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+                            } else {
+                                Text("Server stopped", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        Switch(
+                            checked = isServerRunning,
+                            onCheckedChange = { start ->
+                                if (start) {
+                                    server = PcShareServer(Environment.getExternalStorageDirectory())
+                                    server?.start()
+                                    isServerRunning = true
+                                } else {
+                                    server?.stop()
+                                    server = null
+                                    isServerRunning = false
+                                }
+                            }
+                        )
+                    }
+                }
+                HorizontalDivider()
+            }
+
             if (!hasPermission) {
-                // UI for requesting permissions
                 Column(
-                    modifier = Modifier.align(Alignment.Center),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
                 ) {
                     Text("Storage permission is required.")
                     Spacer(modifier = Modifier.height(16.dp))
@@ -113,16 +165,17 @@ fun FileManagerScreen(onRequestPermission: () -> Unit) {
                     }
                 }
             } else if (files.isEmpty()) {
-                Text("Folder is empty", modifier = Modifier.align(Alignment.Center))
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Folder is empty")
+                }
             } else {
-                // The actual File List UI
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
                     items(files) { file ->
                         FileListItem(file) {
                             if (file.isDirectory) {
                                 currentPath = file
                             } else {
-                                // TODO: Handle file opening (Video, Audio, Text)
+                                // TODO: Handle file opening
                             }
                         }
                         HorizontalDivider()
@@ -158,4 +211,18 @@ fun FileListItem(file: File, onClick: () -> Unit) {
             }
         }
     }
+}
+
+// Helper to grab local IP address
+fun getLocalIpAddress(context: Context): String {
+    val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+    val ipAddress = wifiManager.connectionInfo.ipAddress
+    return String.format(
+        Locale.ROOT,
+        "%d.%d.%d.%d",
+        ipAddress and 0xff,
+        ipAddress shr 8 and 0xff,
+        ipAddress shr 16 and 0xff,
+        ipAddress shr 24 and 0xff
+    )
 }
