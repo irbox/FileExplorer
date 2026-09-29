@@ -63,7 +63,6 @@ fun FileManagerScreen(onRequestPermission: () -> Unit) {
     var currentPath by remember { mutableStateOf(Environment.getExternalStorageDirectory()) }
     var files by remember { mutableStateOf(emptyList<File>()) }
     
-    // Server State
     var isServerRunning by remember { mutableStateOf(false) }
     var server by remember { mutableStateOf<PcShareServer?>(null) }
     val localIpAddress = remember { getLocalIpAddress(context) }
@@ -78,14 +77,18 @@ fun FileManagerScreen(onRequestPermission: () -> Unit) {
         )
     }
 
+    // Safely load files with crash-prevention try-catch
     LaunchedEffect(currentPath, hasPermission) {
         if (hasPermission) {
-            val fileList = currentPath.listFiles()?.toList() ?: emptyList()
-            files = fileList.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.ROOT) }))
+            files = try {
+                val fileList = currentPath.listFiles()?.toList() ?: emptyList()
+                fileList.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.ROOT) }))
+            } catch (e: Exception) {
+                emptyList()
+            }
         }
     }
 
-    // Cleanup server if app closes
     DisposableEffect(Unit) {
         onDispose {
             server?.stop()
@@ -111,7 +114,6 @@ fun FileManagerScreen(onRequestPermission: () -> Unit) {
     ) { paddingValues ->
         Column(modifier = Modifier.padding(paddingValues).fillMaxSize()) {
             
-            // PC Share Control Panel
             if (hasPermission) {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
@@ -164,18 +166,12 @@ fun FileManagerScreen(onRequestPermission: () -> Unit) {
                         Text("Grant Permission")
                     }
                 }
-            } else if (files.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Folder is empty")
-                }
             } else {
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
                     items(files) { file ->
                         FileListItem(file) {
                             if (file.isDirectory) {
                                 currentPath = file
-                            } else {
-                                // TODO: Handle file opening
                             }
                         }
                         HorizontalDivider()
@@ -213,16 +209,19 @@ fun FileListItem(file: File, onClick: () -> Unit) {
     }
 }
 
-// Helper to grab local IP address
 fun getLocalIpAddress(context: Context): String {
-    val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-    val ipAddress = wifiManager.connectionInfo.ipAddress
-    return String.format(
-        Locale.ROOT,
-        "%d.%d.%d.%d",
-        ipAddress and 0xff,
-        ipAddress shr 8 and 0xff,
-        ipAddress shr 16 and 0xff,
-        ipAddress shr 24 and 0xff
-    )
+    try {
+        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        val ipAddress = wifiManager.connectionInfo.ipAddress
+        return String.format(
+            Locale.ROOT,
+            "%d.%d.%d.%d",
+            ipAddress and 0xff,
+            ipAddress shr 8 and 0xff,
+            ipAddress shr 16 and 0xff,
+            ipAddress shr 24 and 0xff
+        )
+    } catch (e: Exception) {
+        return "127.0.0.1"
+    }
 }
