@@ -41,14 +41,16 @@ class PcShareServer(private val rootDir: File, port: Int = 8080) : NanoHTTPD(por
         }
 
         return try {
-            val mime = getMimeTypeForFile(file.name)
+            // Renamed function call to avoid JVM signature clash
+            val mime = determineMimeType(file.name)
             newChunkedResponse(Response.Status.OK, mime, FileInputStream(file))
         } catch (e: FileNotFoundException) {
             newFixedLengthResponse(Response.Status.FORBIDDEN, MIME_PLAINTEXT, "Access Denied")
         }
     }
 
-    private fun getMimeTypeForFile(fileName: String): String {
+    // Renamed from getMimeTypeForFile to determineMimeType
+    private fun determineMimeType(fileName: String): String {
         val extension = MimeTypeMap.getFileExtensionFromUrl(fileName.replace(" ", "%20"))
         return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension.lowercase()) ?: "application/octet-stream"
     }
